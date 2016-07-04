@@ -3,6 +3,8 @@ package rocketmq
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
+	"log"
 )
 
 type Message struct {
@@ -27,6 +29,34 @@ type MessageExt struct {
 	BodyCRC                   int32
 	ReconsumeTimes            int32
 	PreparedTransactionOffset int64
+}
+
+func decodeProperties(data []byte, Properties map[string]string) error {
+
+	buf := bytes.NewBuffer(data)
+	var keyStart = 0
+	var keyEnd = 0
+	var valueStart = 0
+	var valueEnd = 0
+
+	var key, value []byte
+
+	for i := 0; i < buf.Len(); i++ {
+		if data[i] == byte(1) {
+			keyEnd = i
+			valueStart = i + 1
+		} else if data[i] == byte(2) {
+			valueEnd = i
+
+			key = data[keyStart:keyEnd]
+			value = data[valueStart:valueEnd]
+			//			log.Print("msg read Property:", key, value)
+			Properties[string(key)] = string(value)
+
+			keyStart = i + 1
+		}
+	}
+	return nil
 }
 
 func decodeMessage(data []byte) []*MessageExt {
@@ -81,6 +111,14 @@ func decodeMessage(data []byte) []*MessageExt {
 		//msg.commitLogOffset=physicOffset
 		msg.StoreTimestamp = storeTimestamp
 		msg.PreparedTransactionOffset = preparedTransactionOffset
+
+		msg.Properties = make(map[string]string, 2)
+		err := decodeProperties(properties, msg.Properties)
+		//		err := json.Unmarshal(properties, msg.Properties)
+		_ = json.Unmarshal
+		if err != nil {
+			log.Print("msg read Properties error", err, "\n datais:", string(properties), properties)
+		}
 		msg.Body = body
 		msgs = append(msgs, msg)
 	}

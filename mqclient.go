@@ -172,7 +172,12 @@ func (self *MqClient) getConsumerIdListByGroup(addr string, consumerGroup string
 		return nil, err
 	}
 
-	if response.Code == SUCCESS {
+	if response == nil {
+		log.Print("getConsumerIdListByGroup return null.")
+		return nil, errors.New("getConsumerIdListByGroup error")
+	}
+
+	if response != nil && response.Code == SUCCESS {
 		getConsumerListByGroupResponseBody := new(GetConsumerListByGroupResponseBody)
 		bodyjson := strings.Replace(string(response.Body), "0:", "\"0\":", -1)
 		bodyjson = strings.Replace(bodyjson, "1:", "\"1\":", -1)
@@ -404,6 +409,11 @@ func (self *MqClient) queryConsumerOffset(addr string, requestHeader *QueryConsu
 	if err != nil {
 		log.Print(err)
 		return 0, err
+	} else {
+		data, err := json.Marshal(reponse)
+		//log.Print("QUERY_CONSUMER_OFFSET response:", string(data), err)
+		_ = data
+		_ = err
 	}
 
 	if extFields, ok := (reponse.ExtFields).(map[string]interface{}); ok {

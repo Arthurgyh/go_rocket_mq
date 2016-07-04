@@ -90,9 +90,32 @@ func (self *DefalutRemotingClient) invokeSync(addr string, request *RemotingComm
 		log.Print(err)
 		return nil, err
 	}
-	select {
-	case <-response.done:
-	case <-time.After(3 * time.Second):
+	const timeout = 3
+	var done bool
+	done = false
+	for i := 0; i < timeout; i++ {
+		//		time.After(3 * time.Second)
+		//		if response.done {
+		//			break
+		//		}
+		select {
+		case <-response.done:
+			done = true
+		case <-time.After(3 * time.Second):
+		}
+		//		for i := range response.done {
+		//			//fmt.Println(i)
+		//			if i {
+		//				done = true
+		//			}
+		//		}
+		if done {
+			break
+		}
+		if i == timeout-1 {
+			log.Fatal("invokeSync timeout !")
+			return nil, err
+		}
 	}
 
 	return response.responseCommand, nil
@@ -227,8 +250,8 @@ func (self *DefalutRemotingClient) handlerConn(conn net.Conn, addr string) {
 				copy(bodyCopy, body)
 				go func() {
 					cmd := decodeRemoteCommand(headerCopy, bodyCopy)
-					response, ok := self.responseTable[cmd.Opaque]
 					self.mutex.Lock()
+					response, ok := self.responseTable[cmd.Opaque]
 					delete(self.responseTable, cmd.Opaque)
 					self.mutex.Unlock()
 
