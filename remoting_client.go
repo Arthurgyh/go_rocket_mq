@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net"
 	"sync"
@@ -90,10 +91,10 @@ func (self *DefalutRemotingClient) invokeSync(addr string, request *RemotingComm
 		log.Print(err)
 		return nil, err
 	}
-	const timeout = 3
+	const retry = 3
 	var done bool
 	done = false
-	for i := 0; i < timeout; i++ {
+	for i := 0; i < retry; i++ {
 		//		time.After(3 * time.Second)
 		//		if response.done {
 		//			break
@@ -101,7 +102,7 @@ func (self *DefalutRemotingClient) invokeSync(addr string, request *RemotingComm
 		select {
 		case <-response.done:
 			done = true
-		case <-time.After(3 * time.Second):
+		case <-time.After(time.Duration(timeoutMillis) * time.Millisecond):
 		}
 		//		for i := range response.done {
 		//			//fmt.Println(i)
@@ -112,9 +113,9 @@ func (self *DefalutRemotingClient) invokeSync(addr string, request *RemotingComm
 		if done {
 			break
 		}
-		if i == timeout-1 {
+		if i == retry-1 {
 			log.Print("invokeSync timeout !")
-			return nil, err
+			return nil, fmt.Errorf("invokeSync timeout !")
 		}
 	}
 
