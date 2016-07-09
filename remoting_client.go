@@ -113,7 +113,7 @@ func (self *DefalutRemotingClient) invokeSync(addr string, request *RemotingComm
 			break
 		}
 		if i == timeout-1 {
-			log.Fatal("invokeSync timeout !")
+			log.Print("invokeSync timeout !")
 			return nil, err
 		}
 	}

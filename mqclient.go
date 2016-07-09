@@ -46,7 +46,7 @@ type TopicRouteData struct {
 
 type MqClient struct {
 	clientId           string
-	conf               *Config
+	conf               *ClientConfig
 	brokerAddrTable    map[string]map[string]string //map[brokerName]map[bokerId]addrs
 	consumerTable      map[string]*DefaultConsumer
 	topicRouteTable    map[string]*TopicRouteData

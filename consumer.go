@@ -18,7 +18,7 @@ const (
 
 type MessageListener func(msgs []*MessageExt) error
 
-type Config struct {
+type ClientConfig struct {
 	Nameserver   string
 	ClientIp     string
 	InstanceName string
@@ -37,7 +37,7 @@ type Consumer interface {
 }
 
 type DefaultConsumer struct {
-	conf             *Config
+	conf             *ClientConfig
 	consumerGroup    string
 	consumeFromWhere string
 	consumerType     string
@@ -54,9 +54,9 @@ type DefaultConsumer struct {
 	mqClient       *MqClient
 }
 
-func NewDefaultConsumer(name string, conf *Config) (Consumer, error) {
+func NewDefaultConsumer(name string, conf *ClientConfig) (Consumer, error) {
 	if conf == nil {
-		conf = &Config{
+		conf = &ClientConfig{
 			Nameserver:   os.Getenv("ROCKETMQ_NAMESVR"),
 			InstanceName: "DEFAULT",
 		}
