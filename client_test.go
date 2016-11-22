@@ -3,12 +3,10 @@ package rocketmq
 import (
 	"encoding/json"
 	"io/ioutil"
-	//	"log"
+	"log"
 	"strings"
 	"testing"
 	"time"
-
-	log "github.com/Arthurgyh/timber"
 )
 
 var ch = make(chan *RemotingCommand)

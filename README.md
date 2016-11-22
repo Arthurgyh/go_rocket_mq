@@ -1,8 +1,3 @@
-# modify
-use timber for log
-init timber at first.
-
-
 # go_rocket_mq
 go rocketmq client
 #import

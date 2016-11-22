@@ -1,24 +1,28 @@
 package rocketmq
 
-import "fmt"
-import "log"
-import "net"
-import "os"
-import "strconv"
-import "sync/atomic"
-import "time"
+import (
+	"fmt"
+	"github.com/golang/glog"
+	"net"
+	"os"
+	"strconv"
+	"sync/atomic"
+	"time"
+)
 
 const (
-	BrokerSuspendMaxTimeMillis       = 1000 * 15
-	FLAG_COMMIT_OFFSET         int32 = 0x1 << 0
-	FLAG_SUSPEND               int32 = 0x1 << 1
-	FLAG_SUBSCRIPTION          int32 = 0x1 << 2
-	FLAG_CLASS_FILTER          int32 = 0x1 << 3
+	BrokerSuspendMaxTimeMillis = 1000 * 15
+	FLAG_COMMIT_OFFSET int32 = 0x1 << 0
+	FLAG_SUSPEND int32 = 0x1 << 1
+	FLAG_SUBSCRIPTION int32 = 0x1 << 2
+	FLAG_CLASS_FILTER int32 = 0x1 << 3
 )
 
 type MessageListener func(msgs []*MessageExt) error
 
-type ClientConfig struct {
+var DEFAULT_IP = GetLocalIp4()
+
+type Config struct {
 	Nameserver   string
 	ClientIp     string
 	InstanceName string
@@ -37,29 +41,33 @@ type Consumer interface {
 }
 
 type DefaultConsumer struct {
-	conf             *ClientConfig
+	conf             *Config
 	consumerGroup    string
 	consumeFromWhere string
 	consumerType     string
 	messageModel     string
 	unitMode         bool
 
-	subscription    map[string]string
-	messageListener MessageListener
-	offsetStore     OffsetStore
-	brokers         map[string]net.Conn
+	subscription     map[string]string
+	messageListener  MessageListener
+	offsetStore      OffsetStore
+	brokers          map[string]net.Conn
 
-	rebalance      *Rebalance
-	remotingClient RemotingClient
-	mqClient       *MqClient
+	rebalance        *Rebalance
+	remotingClient   RemotingClient
+	mqClient         *MqClient
 }
 
-func NewDefaultConsumer(name string, conf *ClientConfig) (Consumer, error) {
+func NewDefaultConsumer(name string, conf *Config) (Consumer, error) {
 	if conf == nil {
-		conf = &ClientConfig{
+		conf = &Config{
 			Nameserver:   os.Getenv("ROCKETMQ_NAMESVR"),
 			InstanceName: "DEFAULT",
 		}
+	}
+
+	if conf.ClientIp == "" {
+		conf.ClientIp = DEFAULT_IP
 	}
 
 	remotingClient := NewDefaultRemotingClient()
@@ -182,6 +190,7 @@ func (self *DefaultConsumer) pullMessage(pullRequest *PullRequest) {
 
 	pullCallback := func(responseFuture *ResponseFuture) {
 		var nextBeginOffset int64 = pullRequest.nextOffset
+
 		if responseFuture != nil {
 			responseCommand := responseFuture.responseCommand
 			if responseCommand.Code == SUCCESS && len(responseCommand.Body) > 0 {
@@ -192,7 +201,7 @@ func (self *DefaultConsumer) pullMessage(pullRequest *PullRequest) {
 						if nextBeginOffsetStr, ok := nextBeginOffsetInter.(string); ok {
 							nextBeginOffset, err = strconv.ParseInt(nextBeginOffsetStr, 10, 64)
 							if err != nil {
-								log.Print(err)
+								glog.Error(err)
 								return
 							}
 
@@ -205,16 +214,14 @@ func (self *DefaultConsumer) pullMessage(pullRequest *PullRequest) {
 				msgs := decodeMessage(responseFuture.responseCommand.Body)
 				err = self.messageListener(msgs)
 				if err != nil {
-					log.Print(err)
+					glog.Error(err)
 					//TODO retry
 				} else {
 					self.offsetStore.updateOffset(pullRequest.messageQueue, nextBeginOffset, false)
 				}
 			} else if responseCommand.Code == PULL_NOT_FOUND {
 			} else if responseCommand.Code == PULL_RETRY_IMMEDIATELY || responseCommand.Code == PULL_OFFSET_MOVED {
-
-				log.Print(pullRequest.messageQueue)
-				log.Print(fmt.Sprintf("pull message error:%v,body:%s", responseCommand, string(responseCommand.Body)))
+				glog.Errorf("pull message error,code=%d,request=%v", responseCommand.Code,requestHeader)
 				var err error
 				pullResult, ok := responseCommand.ExtFields.(map[string]interface{})
 				if ok {
@@ -222,8 +229,7 @@ func (self *DefaultConsumer) pullMessage(pullRequest *PullRequest) {
 						if nextBeginOffsetStr, ok := nextBeginOffsetInter.(string); ok {
 							nextBeginOffset, err = strconv.ParseInt(nextBeginOffsetStr, 10, 64)
 							if err != nil {
-								log.Print(err)
-								return
+								glog.Error(err)
 							}
 
 						}
@@ -234,11 +240,12 @@ func (self *DefaultConsumer) pullMessage(pullRequest *PullRequest) {
 
 				//time.Sleep(1 * time.Second)
 			} else {
-				log.Print(fmt.Sprintf("pull message error:%v,body:%s", responseCommand, string(responseCommand.Body)))
-				log.Print(pullRequest.messageQueue)
+				glog.Error(fmt.Sprintf("pull message error,code=%d,body=%s", responseCommand.Code, string(responseCommand.Body)))
+				glog.Error(pullRequest.messageQueue)
 				time.Sleep(1 * time.Second)
 			}
 		} else {
+			glog.Error("responseFuture is nil")
 		}
 
 		nextPullRequest := &PullRequest{
@@ -269,9 +276,13 @@ func (self *DefaultConsumer) pullMessage(pullRequest *PullRequest) {
 
 func (self *DefaultConsumer) updateTopicSubscribeInfo(topic string, info []*MessageQueue) {
 	if self.rebalance.subscriptionInner != nil {
+		self.rebalance.subscriptionInnerLock.RLock()
 		_, ok := self.rebalance.subscriptionInner[topic]
+		self.rebalance.subscriptionInnerLock.RUnlock()
 		if ok {
+			self.rebalance.subscriptionInnerLock.Lock()
 			self.rebalance.topicSubscribeInfoTable[topic] = info
+			self.rebalance.subscriptionInnerLock.Unlock()
 		}
 	}
 }

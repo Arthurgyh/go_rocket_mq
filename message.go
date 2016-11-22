@@ -3,10 +3,14 @@ package rocketmq
 import (
 	"bytes"
 	"encoding/binary"
+	"github.com/golang/glog"
 	"encoding/json"
-	"log"
+	"io/ioutil"
+	"compress/zlib"
 )
-
+const(
+	CompressedFlag = (0x1 << 0)
+)
 type Message struct {
 	Topic      string
 	Flag       int32
@@ -31,34 +35,6 @@ type MessageExt struct {
 	PreparedTransactionOffset int64
 }
 
-func decodeProperties(data []byte, Properties map[string]string) error {
-
-	buf := bytes.NewBuffer(data)
-	var keyStart = 0
-	var keyEnd = 0
-	var valueStart = 0
-	var valueEnd = 0
-
-	var key, value []byte
-
-	for i := 0; i < buf.Len(); i++ {
-		if data[i] == byte(1) {
-			keyEnd = i
-			valueStart = i + 1
-		} else if data[i] == byte(2) {
-			valueEnd = i
-
-			key = data[keyStart:keyEnd]
-			value = data[valueStart:valueEnd]
-			//			log.Print("msg read Property:", key, value)
-			Properties[string(key)] = string(value)
-
-			keyStart = i + 1
-		}
-	}
-	return nil
-}
-
 func decodeMessage(data []byte) []*MessageExt {
 	buf := bytes.NewBuffer(data)
 	var storeSize, magicCode, bodyCRC, queueId, flag, sysFlag, reconsumeTimes, bodyLength, bornPort, storePort int32
@@ -67,10 +43,12 @@ func decodeMessage(data []byte) []*MessageExt {
 	var topic, body, properties, bornHost, storeHost []byte
 	var propertiesLength int16
 
+	var propertiesmap map[string]string
+
 	msgs := make([]*MessageExt, 0, 32)
 	for buf.Len() > 0 {
 		msg := new(MessageExt)
-		binary.Read(buf, binary.LittleEndian, &storeSize)
+		binary.Read(buf, binary.BigEndian, &storeSize)
 		binary.Read(buf, binary.BigEndian, &magicCode)
 		binary.Read(buf, binary.BigEndian, &bodyCRC)
 		binary.Read(buf, binary.BigEndian, &queueId)
@@ -92,13 +70,41 @@ func decodeMessage(data []byte) []*MessageExt {
 		if bodyLength > 0 {
 			body = make([]byte, bodyLength)
 			binary.Read(buf, binary.BigEndian, body)
+
+			if (sysFlag &  CompressedFlag) == CompressedFlag {
+				b := bytes.NewReader(body)
+				z, err := zlib.NewReader(b)
+				if err != nil {
+					glog.Error(err)
+					return nil
+				}
+				defer z.Close()
+				body, err = ioutil.ReadAll(z)
+				if err != nil {
+					glog.Error(err)
+					return nil
+				}
+			}
+
 		}
 		binary.Read(buf, binary.BigEndian, &topicLen)
 		topic = make([]byte, topicLen)
 		binary.Read(buf, binary.BigEndian, &topic)
 		binary.Read(buf, binary.BigEndian, &propertiesLength)
-		properties = make([]byte, propertiesLength)
-		binary.Read(buf, binary.BigEndian, &properties)
+		if propertiesLength >0 {
+			properties = make([]byte, propertiesLength)
+			binary.Read(buf, binary.BigEndian, &properties)
+			propertiesmap = make(map[string]string)
+			json.Unmarshal(properties,&propertiesmap)
+		}
+
+		if magicCode != -626843481 {
+			glog.Infof("magic code is error %d",magicCode)
+			return nil
+		}
+
+
+
 		msg.Topic = string(topic)
 		msg.QueueId = queueId
 		msg.SysFlag = sysFlag
@@ -111,15 +117,9 @@ func decodeMessage(data []byte) []*MessageExt {
 		//msg.commitLogOffset=physicOffset
 		msg.StoreTimestamp = storeTimestamp
 		msg.PreparedTransactionOffset = preparedTransactionOffset
-
-		msg.Properties = make(map[string]string, 2)
-		err := decodeProperties(properties, msg.Properties)
-		//		err := json.Unmarshal(properties, msg.Properties)
-		_ = json.Unmarshal
-		if err != nil {
-			log.Print("msg read Properties error", err, "\n datais:", string(properties), properties)
-		}
 		msg.Body = body
+		msg.Properties = propertiesmap
+
 		msgs = append(msgs, msg)
 	}
 

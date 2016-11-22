@@ -2,7 +2,7 @@ package rocketmq
 
 import (
 	"errors"
-	"log"
+	"github.com/golang/glog"
 	"sync"
 	"sync/atomic"
 )
@@ -26,7 +26,7 @@ type RemoteOffsetStore struct {
 	groupName   string
 	mqClient    *MqClient
 	offsetTable map[MessageQueue]int64
-	mutex       sync.Mutex
+	offsetTableLock sync.RWMutex
 }
 
 func (self *RemoteOffsetStore) readOffset(mq *MessageQueue, readType int) int64 {
@@ -34,7 +34,9 @@ func (self *RemoteOffsetStore) readOffset(mq *MessageQueue, readType int) int64 
 	switch readType {
 	case MEMORY_FIRST_THEN_STORE:
 	case READ_FROM_MEMORY:
+		self.offsetTableLock.RLock()
 		offset, ok := self.offsetTable[*mq]
+		self.offsetTableLock.RUnlock()
 		if ok {
 			return offset
 		} else if readType == READ_FROM_MEMORY {
@@ -44,7 +46,7 @@ func (self *RemoteOffsetStore) readOffset(mq *MessageQueue, readType int) int64 
 		offset, err := self.fetchConsumeOffsetFromBroker(mq)
 
 		if err != nil {
-			log.Print(err)
+			glog.Error(err)
 			return -1
 		}
 		self.updateOffset(mq, offset, false)
@@ -59,7 +61,9 @@ func (self *RemoteOffsetStore) fetchConsumeOffsetFromBroker(mq *MessageQueue) (i
 	brokerAddr, _, found := self.mqClient.findBrokerAddressInSubscribe(mq.brokerName, 0, false)
 
 	if !found {
-		self.mqClient.updateTopicRouteInfoFromNameServerByTopic(mq.topic)
+		if err := self.mqClient.updateTopicRouteInfoFromNameServerByTopic(mq.topic); err != nil {
+			return 0, err
+		}
 		brokerAddr, _, found = self.mqClient.findBrokerAddressInSubscribe(mq.brokerName, 0, false)
 	}
 
@@ -79,7 +83,7 @@ func (self *RemoteOffsetStore) persist(mq *MessageQueue) {
 	if ok {
 		err := self.updateConsumeOffsetToBroker(mq, offset)
 		if err != nil {
-			log.Print(err)
+			glog.Error(err)
 		}
 	}
 }
@@ -94,7 +98,9 @@ type UpdateConsumerOffsetRequestHeader struct {
 func (self *RemoteOffsetStore) updateConsumeOffsetToBroker(mq *MessageQueue, offset int64) error {
 	addr, found, _ := self.mqClient.findBrokerAddressInSubscribe(mq.brokerName, 0, false)
 	if !found {
-		self.mqClient.updateTopicRouteInfoFromNameServerByTopic(mq.topic)
+		if err := self.mqClient.updateTopicRouteInfoFromNameServerByTopic(mq.topic); err != nil {
+			return err
+		}
 		addr, found, _ = self.mqClient.findBrokerAddressInSubscribe(mq.brokerName, 0, false)
 	}
 
@@ -113,19 +119,24 @@ func (self *RemoteOffsetStore) updateConsumeOffsetToBroker(mq *MessageQueue, off
 }
 
 func (self *RemoteOffsetStore) updateOffset(mq *MessageQueue, offset int64, increaseOnly bool) {
-	self.mutex.Lock()
-	defer self.mutex.Unlock()
 	if mq != nil {
+		self.offsetTableLock.RLock()
 		offsetOld, ok := self.offsetTable[*mq]
+		self.offsetTableLock.RUnlock()
 		if !ok {
+			self.offsetTableLock.Lock()
 			self.offsetTable[*mq] = offset
+			self.offsetTableLock.Unlock()
 		} else {
 			if increaseOnly {
 				atomic.AddInt64(&offsetOld, offset)
+				self.offsetTableLock.Lock()
 				self.offsetTable[*mq] = offsetOld
+				self.offsetTableLock.Unlock()
 			} else {
+				self.offsetTableLock.Lock()
 				self.offsetTable[*mq] = offset
-
+				self.offsetTableLock.Unlock()
 			}
 		}
 
